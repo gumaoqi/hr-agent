@@ -1,0 +1,12 @@
+{
+  "name": "hr-agent",
+  "version": "1.0.0",
+  "private": true,
+  "description": "HR-Agent 人事智能体后端启动入口（Glitch 等根目录部署平台用；常规平台请直接使用 server 目录）",
+  "scripts": {
+    "start": "cd server && npm install --no-audit --no-fund && node index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
