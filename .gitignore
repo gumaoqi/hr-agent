@@ -1,0 +1,15 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+
+# 环境变量与本地配置（含 DeepSeek / 讯飞密钥，严禁提交）
+.env
+.env.*
+!.env.example
+
+# 日志与临时文件
+*.log
+.DS_Store
+Thumbs.db

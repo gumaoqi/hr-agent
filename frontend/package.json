@@ -1,0 +1,20 @@
+{
+  "name": "hr-agent-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "HR-Agent 人事智能体前端（Vue3）",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "echarts": "^6.1.0",
+    "vue": "^3.4.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.0.0",
+    "vite": "^5.2.0"
+  }
+}
