@@ -493,7 +493,9 @@ async function analyzeResume(fileInfo, requirements) {
   if (!text.trim()) {
     return {
       name: fileInfo.originalname.replace(/\.pdf$/i, ''),
-      authenticity: 'PDF 无法解析出文本（可能为扫描件），请人工查看原简历',
+      authenticity: fileInfo.parseError
+        ? `PDF 解析失败：${fileInfo.parseError}`
+        : 'PDF 无法解析出文本（可能为扫描件），请人工查看原简历',
       weaknesses: '无法评估',
       highlights: '无法评估',
       score: null,
@@ -589,7 +591,7 @@ app.post('/api/resume-screening', upload.array('resumes', 20), async (req, res) 
       parsed.push({ originalname: name, text: text || '' });
     } catch (e) {
       console.warn('[resume] PDF 解析失败:', name, e.message);
-      parsed.push({ originalname: name, text: '', parseFailed: true });
+      parsed.push({ originalname: name, text: '', parseFailed: true, parseError: e.message });
     }
   }
 
