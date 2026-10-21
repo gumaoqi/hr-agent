@@ -1,5 +1,5 @@
 // Netlify Functions handler 冒烟测试：模拟函数运行时调用包装后的 Express
-import { handler } from './functions/api.js';
+import { handler } from './functions/api.mjs';
 
 async function call(path, method = 'GET', body = null) {
   const res = await handler(

@@ -12,7 +12,9 @@
 # （wasm 解码器等特殊包免 esbuild 打包风险）
 [functions]
   directory = "server/functions"
-  node_bundler = "zisi"
+  # nft（Node File Trace）：官方默认打包器，原生支持 ESM 与函数目录外的相对导入（api.mjs → ../index.js），
+  # 且保留 wasm 文件结构（mpg123-decoder / @wasm-audio-decoders 等无需特殊处理）
+  node_bundler = "nft"
 
 # 岗位普查需调用 DeepSeek 搜索+生成，10s 默认超时不够，提升到 26s 上限
 [functions."api"]
