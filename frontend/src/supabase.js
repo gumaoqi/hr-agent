@@ -1,27 +1,42 @@
 // Supabase 客户端（前端仅用 anon key + 公开桶直传录音；service_role key 严禁出现在前端）
-// URL 与 anon key 为 Supabase 设计上的公开值（浏览器可访问），写为默认值便于部署
-// 也可通过 VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY 环境变量覆盖
+// 配置运行时从后端 /api/supabase-config 获取（避免构建产物硬编码敏感串触发 Netlify 密钥扫描）
 import { createClient } from '@supabase/supabase-js';
+import { API_BASE } from './api.js';
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || 'https://slemwwuwsfypmxmpoeqh.supabase.co';
-const SUPABASE_ANON_KEY =
-  import.meta.env.VITE_SUPABASE_ANON_KEY ||
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNsZW13d3V3c2Z5cG14bXBvZXFoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxNTk0NzksImV4cCI6MjA5NDczNTQ3OX0.7bBIKYlmy2j3fpja6CTFoTtyZsnD1kIiItZ_REOQFkg';
-
-export const supabase = SUPABASE_URL && SUPABASE_ANON_KEY ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 export const AUDIO_BUCKET = 'hr-audio';
+
+let supabasePromise = null;
+
+async function initSupabase() {
+  try {
+    const resp = await fetch(`${API_BASE}/api/supabase-config`, { method: 'GET' });
+    if (!resp.ok) return null;
+    const cfg = await resp.json();
+    if (!cfg.url || !cfg.anonKey) return null;
+    return createClient(cfg.url, cfg.anonKey);
+  } catch {
+    return null;
+  }
+}
+
+/** 惰性初始化 Supabase 客户端（仅首次调用拉取配置） */
+export async function getSupabase() {
+  if (supabasePromise === null) supabasePromise = initSupabase();
+  return supabasePromise;
+}
 
 /**
  * 上传面试录音到 Supabase Storage 公共桶，返回可直接供讯飞 urlLink 拉取的公共 URL
  * 未配置 Supabase 时抛错（上层回退到本地直传后端转写，用于自托管场景）
  */
 export async function uploadInterviewAudio(file) {
-  if (!supabase) {
+  const sb = await getSupabase();
+  if (!sb) {
     throw new Error('SUPABASE_NOT_CONFIGURED');
   }
   const safe = (file.name || 'audio').replace(/[^\w\u4e00-\u9fa5.-]/g, '_');
   const path = `${Date.now()}-${safe}`;
-  const { data, error } = await supabase.storage.from(AUDIO_BUCKET).upload(path, file, {
+  const { data, error } = await sb.storage.from(AUDIO_BUCKET).upload(path, file, {
     cacheControl: '3600',
     upsert: false,
     contentType: file.type || 'audio/wav',
@@ -29,6 +44,6 @@ export async function uploadInterviewAudio(file) {
   if (error) {
     throw new Error(`录音上传失败：${error.message}`);
   }
-  const { data: pub } = supabase.storage.from(AUDIO_BUCKET).getPublicUrl(data.path);
+  const { data: pub } = sb.storage.from(AUDIO_BUCKET).getPublicUrl(data.path);
   return pub.publicUrl;
 }

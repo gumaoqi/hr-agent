@@ -36,6 +36,8 @@ const XF_APISECRET = process.env.XF_APISECRET || '';
 // 未配置时回退到内存缓存（本地开发/自托管模式）
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+// anon key（公开值，仅用于向前端下发直传 Storage 的配置；Netlify 部署需在环境变量配置）
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
 const supabase = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY) : null;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -384,6 +386,12 @@ app.post('/api/census', async (req, res) => {
 
 app.get('/health', (_req, res) => {
   res.json({ ok: true, model: MODEL });
+});
+
+// 向前端下发 Supabase 公开配置（URL + anon key；避免前端构建产物硬编码敏感串触发 Netlify 密钥扫描）
+// anon key 为 Supabase 设计上的公开值，可安全下发给浏览器
+app.get('/api/supabase-config', (_req, res) => {
+  res.json({ url: SUPABASE_URL, anonKey: SUPABASE_ANON_KEY });
 });
 
 // ---------- 功能2：简历筛选 ----------
