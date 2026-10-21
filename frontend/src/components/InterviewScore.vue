@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue';
 import { API_BASE } from '../api.js';
+import { uploadInterviewAudio } from '../supabase.js';
 
 const records = ref([]);
 const selectedFile = ref('');
@@ -10,6 +11,7 @@ const transcriptFile = ref(null);
 const transcriptText = ref('');
 const materialMode = ref(''); // 'audio' | 'file' | 'text'
 const loading = ref(false);
+const transcribing = ref(false); // 录音异步转写中（Netlify 场景：提交订单号后前端轮询）
 const error = ref('');
 const result = ref(null); // 后端返回：{ ai, name, job, city, transcript, ... }
 const final = ref(null); // 手动调整后的最终评分
@@ -45,7 +47,10 @@ function onTranscriptFile(e) {
   error.value = '';
 }
 
-/** 评分请求：问题 PDF 必传；录音 / 转写文本文件 / 粘贴文本三选一（有文本优先，后端自动跳过讯飞转写） */
+/** 评分请求：问题 PDF 必传；录音 / 转写文本文件 / 粘贴文本三选一（有文本优先，后端自动跳过讯飞转写）
+ * 录音路径：优先直传 Supabase Storage（Netlify 部署）→ 后端提交讯飞异步转写 → 前端轮询查询；
+ * 未配置 Supabase 时回退本地直传后端同步转写（自托管模式）
+ */
 async function startScore() {
   error.value = '';
   if (!selectedFile.value) {
@@ -73,19 +78,58 @@ async function startScore() {
     return;
   }
   loading.value = true;
+  transcribing.value = false;
   result.value = null;
   final.value = null;
   const fd = new FormData();
   fd.append('resumeFileName', selectedFile.value);
   fd.append('questionsPdf', questionsPdf.value);
-  if (audioFile.value) fd.append('audio', audioFile.value);
   if (transcriptFile.value) fd.append('transcriptFile', transcriptFile.value);
   if (transcriptText.value.trim()) fd.append('transcript', transcriptText.value.trim());
   try {
+    // 录音：优先直传 Supabase Storage 拿公共 URL（Netlify 场景）；未配置则回退上传音频二进制（本地同步转写）
+    if (audioFile.value) {
+      let audioUrl = null;
+      try {
+        audioUrl = await uploadInterviewAudio(audioFile.value);
+      } catch (e) {
+        if (e.message === 'SUPABASE_NOT_CONFIGURED') {
+          fd.append('audio', audioFile.value);
+        } else {
+          throw e;
+        }
+      }
+      if (audioUrl) fd.append('audioUrl', audioUrl);
+      if (audioUrl) fd.append('audioSize', String(audioFile.value.size));
+    }
     const resp = await fetch(`${API_BASE}/api/interview-score`, { method: 'POST', body: fd });
     const data = await resp.json();
     if (!resp.ok) {
       throw new Error(data.error || `请求失败（HTTP ${resp.status}）`);
+    }
+    // 异步转写：提交成功返回 pending + orderId，前端每 5 秒轮询查询（最长约 3 分钟）
+    if (data.pending) {
+      transcribing.value = true;
+      for (let i = 0; i < 40; i++) {
+        await new Promise((r) => setTimeout(r, 5000));
+        const qr = await fetch(`${API_BASE}/api/interview-score-query`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ orderId: data.orderId }),
+        });
+        const q = await qr.json();
+        if (!qr.ok) {
+          throw new Error(q.error || `查询失败（HTTP ${qr.status}）`);
+        }
+        if (!q.pending) {
+          data = q;
+          break;
+        }
+      }
+      transcribing.value = false;
+      if (data.pending) {
+        throw new Error('录音转写超时（约 3 分钟内未完成），请稍后重试或改用转录文本');
+      }
     }
     result.value = data;
     // 预填手动调整区（以 AI 评分为基础）
@@ -198,9 +242,13 @@ async function exportPdf() {
       </div>
     </div>
 
-    <button class="btn primary" :disabled="loading" @click="startScore">
-      {{ loading ? '评分中…' : '开始 AI 评分' }}
+    <button class="btn primary" :disabled="loading || transcribing" @click="startScore">
+      {{ transcribing ? '录音转写中（约1-3分钟），请勿关闭页面…' : loading ? '评分中…' : '开始 AI 评分' }}
     </button>
+
+    <div v-if="transcribing" class="error" style="background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe;">
+      录音已上传，正在讯飞转写中（约 1-3 分钟），期间请保持页面打开；完成后自动评分。
+    </div>
 
     <div v-if="result" class="result">
       <div class="panel">

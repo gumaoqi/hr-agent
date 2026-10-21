@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { createClient } from '@supabase/supabase-js';
 
 const require = createRequire(import.meta.url);
 const pdfParse = require('pdf-parse');
@@ -30,6 +31,12 @@ const BASE_URL = 'https://api.deepseek.com';
 const XF_APP_ID = process.env.XF_APP_ID || '';
 const XF_API_KEY = process.env.XF_API_KEY || '';
 const XF_APISECRET = process.env.XF_APISECRET || '';
+
+// Supabase（Netlify 部署时用于：简历缓存表 + 面试录音 Storage + 转写任务表）
+// 未配置时回退到内存缓存（本地开发/自托管模式）
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const supabase = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY) : null;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -77,13 +84,16 @@ async function collectCandidates(city, job) {
     `site:liepin.com ${city} ${job}`,
     `site:51job.com ${city} ${job}`,
   ];
-  for (const q of queries) {
-    try {
-      push(await deepseekSearch(q, `查找${city}的${job}岗位最新发布的招聘信息`));
-    } catch (e) {
-      console.warn('[census] 搜索失败:', q, e.message);
-    }
-  }
+  // 并行搜索（Netlify 函数 26s 超时限制：串行会超时，改为并发）
+  await Promise.all(
+    queries.map(async (q) => {
+      try {
+        push(await deepseekSearch(q, `查找${city}的${job}岗位最新发布的招聘信息`));
+      } catch (e) {
+        console.warn('[census] 搜索失败:', q, e.message);
+      }
+    })
+  );
 
   // 排序：内容含目标岗位名的候选提前；同相关度下按 站点优先级（zhipin > liepin > 51job）
   const score = (r) => {
@@ -386,15 +396,69 @@ const upload = multer({
 
 // ---------- 功能3：面试准备 ----------
 
-// 最近筛选简历的内存缓存（文件名 -> 简历文本与元信息；进程重启即清，不落盘）
+// 最近筛选简历的缓存（文件名 -> 简历文本与元信息）
+// 部署到 Netlify 时用 Supabase 表持久化（函数冷启动不丢）；未配置 Supabase 时回退内存 Map
+const RESUME_CACHE_TABLE = 'hr_screened_resumes';
 const resumeCache = new Map();
 const RESUME_CACHE_MAX = 100;
-function setResumeCache(fileName, entry) {
+async function setResumeCache(fileName, entry) {
   resumeCache.set(fileName, entry);
   if (resumeCache.size > RESUME_CACHE_MAX) {
     const oldest = resumeCache.keys().next().value;
     resumeCache.delete(oldest);
   }
+  // Supabase 持久化（文本截断保护）
+  if (supabase) {
+    try {
+      await supabase.from(RESUME_CACHE_TABLE).upsert(
+        {
+          file_name: fileName,
+          name: entry.name || null,
+          text: (entry.text || '').slice(0, 20000),
+          job: entry.job || null,
+          city: entry.city || null,
+          salary: entry.salary || null,
+          education: entry.education || null,
+          other: entry.other || null,
+          score: entry.score != null ? entry.score : null,
+        },
+        { onConflict: 'file_name' }
+      );
+    } catch (err) {
+      console.error('setResumeCache(Supabase) 写入失败:', err.message);
+    }
+  }
+}
+async function getResumeCache(fileName) {
+  const mem = resumeCache.get(fileName);
+  if (mem) return mem;
+  if (supabase) {
+    try {
+      const { data } = await supabase
+        .from(RESUME_CACHE_TABLE)
+        .select('*')
+        .eq('file_name', fileName)
+        .maybeSingle();
+      if (data) {
+        const entry = {
+          name: data.name,
+          text: data.text,
+          job: data.job,
+          city: data.city,
+          salary: data.salary,
+          education: data.education,
+          other: data.other,
+          score: data.score,
+          fileName: data.file_name,
+        };
+        resumeCache.set(fileName, entry);
+        return entry;
+      }
+    } catch (err) {
+      console.error('getResumeCache(Supabase) 读取失败:', err.message);
+    }
+  }
+  return null;
 }
 
 /** 单份简历分析：调用 DeepSeek 输出结构化评估 */
@@ -528,7 +592,7 @@ app.post('/api/resume-screening', upload.array('resumes', 20), async (req, res) 
   // 写入面试准备缓存（仅内存，供功能3按简历名取用）
   for (const p of parsed) {
     const item = items.find((i) => i.fileName === p.originalname);
-    setResumeCache(p.originalname, {
+    await setResumeCache(p.originalname, {
       text: p.text,
       name: item?.name || p.originalname.replace(/\.pdf$/i, ''),
       score: item?.score ?? null,
@@ -594,7 +658,7 @@ app.post('/api/interview-prep', async (req, res) => {
   if (!fileName) {
     return res.status(400).json({ error: '请选择一份简历' });
   }
-  const cached = resumeCache.get(fileName);
+  const cached = await getResumeCache(fileName);
   if (!cached) {
     return res.status(404).json({ error: '未找到该简历的筛选记录，请先在「简历筛选」中上传简历打分' });
   }
@@ -659,7 +723,7 @@ app.post('/api/interview-pdf', async (req, res) => {
   if (!fileName) {
     return res.status(400).json({ error: '缺少简历名' });
   }
-  const cached = resumeCache.get(fileName);
+  const cached = await getResumeCache(fileName);
   const qs = Array.isArray(questions) ? questions.filter((x) => x && x.q) : [];
   try {
     const pdf = await buildInterviewPdf({
@@ -733,13 +797,16 @@ function parseXfIfasrResult(orderResult) {
     const data = JSON.parse(orderResult);
     const lattice = Array.isArray(data.lattice) ? data.lattice : [];
     for (const item of lattice) {
-      if (!item || typeof item.json_1best !== 'string') continue;
-      let best;
-      try {
-        best = JSON.parse(item.json_1best);
-      } catch {
-        continue;
+      // json_1best 可能是字符串（需解析）或对象（直接使用），两种都兼容
+      let best = item?.json_1best;
+      if (typeof best === 'string') {
+        try {
+          best = JSON.parse(best);
+        } catch {
+          continue;
+        }
       }
+      if (!best || typeof best !== 'object') continue;
       const rl = best?.st?.rl || '0';
       let buf = '';
       const rt = best?.st?.rt || [];
@@ -1021,6 +1088,156 @@ async function transcribeAudio({ buffer, fileName }) {
   throw new Error('讯飞转写超时（约 3 分钟内未完成），请稍后重试或改用转录文本');
 }
 
+/** 讯飞 urlLink 模式提交转写任务：音频已上传 Supabase Storage，传公共 URL 即可（配合 Netlify 函数 26s 超时限制，提交后由前端轮询）
+ * 返回 orderId 与 signatureRandom（查询必须与上传一致）
+ */
+async function submitAsrByUrl(audioUrl, fileSize) {
+  if (!XF_APP_ID || !XF_API_KEY || !XF_APISECRET) {
+    throw new Error('未配置讯飞转写凭据（server/.env 的 XF_APP_ID / XF_API_KEY / XF_APISECRET），请改用转录文本');
+  }
+  // urlLink 模式同样需要 fileSize：前端直传时已知道大小；缺失时向后端 HEAD 探测
+  let size = Number(fileSize) || 0;
+  if (!size) {
+    try {
+      const head = await fetch(audioUrl, { method: 'HEAD' });
+      size = Number(head.headers.get('content-length')) || 0;
+    } catch {
+      size = 0;
+    }
+  }
+  if (!size) {
+    throw new Error('无法确定录音大小（fileSize），请重新上传录音');
+  }
+  const HOST = 'office-api-ist-dx.iflyaisol.com';
+  const signatureRandom = xfRandom16();
+  const uploadParams = {
+    appId: XF_APP_ID,
+    accessKeyId: XF_API_KEY,
+    dateTime: xfDateTime(),
+    signatureRandom,
+    audioMode: 'urlLink',
+    audioUrl,
+    fileSize: String(size),
+    fileName: 'hr_interview.wav',
+    durationCheckDisable: 'true', // 关闭时长校验
+    language: 'autodialect',
+    roleType: '1', // 通用角色分离（面试双人场景）
+  };
+  const uploadUrl = `https://${HOST}/v2/upload?${buildQuery(uploadParams)}`;
+  const uploadRes = await fetch(uploadUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      signature: xfIfasrSignature(uploadParams, XF_APISECRET),
+    },
+    body: Buffer.alloc(0), // urlLink 模式无需上传音频体
+  });
+  if (!uploadRes.ok) {
+    throw new Error(`讯飞转写提交失败：HTTP ${uploadRes.status} ${(await uploadRes.text()).slice(0, 200)}`);
+  }
+  const uploadData = await uploadRes.json();
+  if (uploadData.code !== '000000') {
+    throw new Error(`讯飞转写提交失败：${uploadData.code} ${uploadData.descInfo || ''}`);
+  }
+  const orderId = uploadData.content?.orderId;
+  if (!orderId) {
+    throw new Error('讯飞转写提交失败：未返回订单号');
+  }
+  return { orderId, signatureRandom };
+}
+
+/** 讯飞单次查询转写状态（不轮询）：status=4 返回 {status:4,text}；status=3/其他进行中返回 {status}；status=-1 抛错 */
+async function queryAsrByOrder(orderId, signatureRandom) {
+  const HOST = 'office-api-ist-dx.iflyaisol.com';
+  const queryParams = {
+    accessKeyId: XF_API_KEY,
+    dateTime: xfDateTime(),
+    signatureRandom,
+    orderId,
+    resultType: 'transfer',
+  };
+  const queryRes = await fetch(`https://${HOST}/v2/getResult?${buildQuery(queryParams)}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      signature: xfIfasrSignature(queryParams, XF_APISECRET),
+    },
+    body: '{}',
+  });
+  if (!queryRes.ok) {
+    throw new Error(`讯飞任务查询失败：HTTP ${queryRes.status} ${(await queryRes.text()).slice(0, 200)}`);
+  }
+  const queryData = await queryRes.json();
+  if (queryData.code !== '000000') {
+    throw new Error(`讯飞任务查询失败：${queryData.code} ${queryData.descInfo || ''}`);
+  }
+  const info = queryData.content?.orderInfo || {};
+  if (info.status === 4) {
+    const text = parseXfIfasrResult(queryData.content?.orderResult || '');
+    if (!text) {
+      throw new Error('讯飞转写完成但未返回有效文本，请检查音频是否为静音或格式不符');
+    }
+    return { status: 4, text };
+  }
+  if (info.status === -1) {
+    throw new Error(`讯飞转写失败（failType=${info.failType}），请检查音频是否损坏、格式或时长是否符合要求`);
+  }
+  return { status: info.status || 3 };
+}
+
+// 转写任务上下文暂存（orderId -> 简历/问题文本等，供查询完成后的评分使用）
+// Supabase 优先（函数冷启动不丢），未配置时回退内存
+const ASR_JOBS_TABLE = 'hr_asr_jobs';
+const asrJobs = new Map();
+async function saveAsrJob(orderId, entry) {
+  asrJobs.set(orderId, entry);
+  if (supabase) {
+    try {
+      await supabase.from(ASR_JOBS_TABLE).upsert(
+        {
+          order_id: orderId,
+          resume_file_name: entry.resumeFileName,
+          signature_random: entry.signatureRandom,
+          questions_text: (entry.questionsText || '').slice(0, 6000),
+          job: entry.job || null,
+          city: entry.city || null,
+          name: entry.name || null,
+          score: entry.score ?? null,
+          created_at: new Date().toISOString(),
+        },
+        { onConflict: 'order_id' }
+      );
+    } catch (err) {
+      console.error('saveAsrJob(Supabase) 写入失败:', err.message);
+    }
+  }
+}
+async function getAsrJob(orderId) {
+  const mem = asrJobs.get(orderId);
+  if (mem) return mem;
+  if (supabase) {
+    try {
+      const { data } = await supabase.from(ASR_JOBS_TABLE).select('*').eq('order_id', orderId).maybeSingle();
+      if (data) {
+        const entry = {
+          resumeFileName: data.resume_file_name,
+          signatureRandom: data.signature_random,
+          questionsText: data.questions_text || '',
+          job: data.job,
+          city: data.city,
+          name: data.name,
+          score: data.score,
+        };
+        asrJobs.set(orderId, entry);
+        return entry;
+      }
+    } catch (err) {
+      console.error('getAsrJob(Supabase) 读取失败:', err.message);
+    }
+  }
+  return null;
+}
+
 const SCORE_DIMS = ['professional', 'communication', 'logic', 'match', 'quality'];
 const SCORE_DIM_LABELS = { professional: '专业能力', communication: '沟通表达', logic: '逻辑思维', match: '岗位匹配', quality: '综合素质' };
 
@@ -1112,7 +1329,7 @@ app.post(
     { name: 'transcriptFile', maxCount: 1 },
   ]),
   async (req, res) => {
-    const { resumeFileName, transcript } = req.body || {};
+    const { resumeFileName, transcript, audioUrl, audioSize } = req.body || {};
     const questionsPdf = req.files?.questionsPdf?.[0];
     const audio = req.files?.audio?.[0];
     const transcriptFile = req.files?.transcriptFile?.[0];
@@ -1120,7 +1337,7 @@ app.post(
     if (!resumeFileName) {
       return res.status(400).json({ error: '请选择一份简历' });
     }
-    const cached = resumeCache.get(resumeFileName);
+    const cached = await getResumeCache(resumeFileName);
     if (!cached) {
       return res.status(404).json({ error: '未找到该简历的筛选记录，请先在「简历筛选」中上传简历打分' });
     }
@@ -1128,7 +1345,7 @@ app.post(
       return res.status(400).json({ error: '请上传功能3导出的面试问题 PDF' });
     }
     const manualTranscript = (transcript || '').trim();
-    if (!audio && !manualTranscript && !transcriptFile) {
+    if (!audioUrl && !audio && !manualTranscript && !transcriptFile) {
       return res.status(400).json({ error: '请上传面试录音、转写文本文件，或直接粘贴转录文本' });
     }
 
@@ -1144,7 +1361,35 @@ app.post(
         return res.status(400).json({ error: '问题 PDF 无法解析出文本' });
       }
 
-      // 2. 转写文本：优先粘贴文本 → 上传文本文件 → 否则调讯飞转写录音
+      // 2a. 录音已由前端直传 Supabase Storage（Netlify 场景）→ 异步提交讯飞转写，返回订单号由前端轮询
+      if (audioUrl) {
+        try {
+          const asr = await submitAsrByUrl(audioUrl, audioSize);
+          await saveAsrJob(asr.orderId, {
+            resumeFileName,
+            signatureRandom: asr.signatureRandom,
+            questionsText: questionsText.slice(0, 6000),
+            job: cached.job,
+            city: cached.city,
+            name: cached.name,
+            score: cached.score,
+          });
+          return res.json({
+            pending: true,
+            orderId: asr.orderId,
+            resumeFileName,
+            name: cached.name,
+            job: cached.job,
+            city: cached.city,
+            score: cached.score,
+            questionsText: questionsText.slice(0, 6000),
+          });
+        } catch (e) {
+          return res.status(502).json({ error: `录音转写提交失败：${e.message}` });
+        }
+      }
+
+      // 2b. 转写文本：优先粘贴文本 → 上传文本文件 → 否则本地上传录音同步转写（自托管模式）
       let finalTranscript = manualTranscript;
       let asrOrderId = null;
       if (!finalTranscript && transcriptFile) {
@@ -1192,6 +1437,49 @@ app.post(
     }
   }
 );
+
+/** 功能4 轮询查询：提交转写任务后，前端每 5 秒调用本接口；转写完成（status=4）时同步完成 AI 评分并返回完整结果 */
+app.post('/api/interview-score-query', async (req, res) => {
+  const { orderId } = req.body || {};
+  if (!orderId) {
+    return res.status(400).json({ error: '缺少转写订单号' });
+  }
+  const job = await getAsrJob(orderId);
+  if (!job) {
+    return res.status(404).json({ error: '未找到该转写任务，请重新提交' });
+  }
+  try {
+    const qr = await queryAsrByOrder(orderId, job.signatureRandom);
+    if (qr.status !== 4) {
+      return res.json({ pending: true });
+    }
+    // 转写完成：取简历缓存并评分
+    const cached = await getResumeCache(job.resumeFileName);
+    if (!cached) {
+      return res.status(404).json({ error: '未找到该简历的筛选记录，请先在「简历筛选」中上传简历打分' });
+    }
+    const ai = await aiInterviewScore({
+      resumeText: cached.text,
+      job: cached.job,
+      questions: (job.questionsText || '').slice(0, 6000),
+      transcript: qr.text.slice(0, 20000),
+    });
+    res.json({
+      resumeFileName: job.resumeFileName,
+      name: cached.name,
+      job: cached.job,
+      city: cached.city,
+      score: cached.score,
+      questionsText: (job.questionsText || '').slice(0, 6000),
+      transcript: qr.text.slice(0, 20000),
+      asrOrderId: orderId,
+      ai,
+    });
+  } catch (e) {
+    console.error('[interview-score-query] 查询/评分失败:', e.message);
+    res.status(500).json({ error: `查询/评分失败：${e.message}` });
+  }
+});
 
 /** 用 pdfkit 生成面试评分报告 PDF（AI 评分与人工调整后最终评分对照） */
 function buildScorePdf({ fileName, name, job, city, ai, final, generatedAt }) {
@@ -1296,6 +1584,11 @@ app.get('/', (_req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`HR-Agent server 已启动: http://localhost:${PORT}`);
-});
+// 本地开发/自托管：直接 node index.js 启动；Netlify Functions 环境下由函数运行时调用导出，不自行监听
+if (!process.env.NETLIFY) {
+  app.listen(PORT, () => {
+    console.log(`HR-Agent server 已启动: http://localhost:${PORT}`);
+  });
+}
+
+export { app };

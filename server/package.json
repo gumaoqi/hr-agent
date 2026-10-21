@@ -10,6 +10,7 @@
     "dev": "node --watch index.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.118.0",
     "@wasm-audio-decoders/aac": "^0.0.1",
     "@wasm-audio-decoders/flac": "^0.2.11",
     "cors": "^2.8.5",
@@ -20,6 +21,7 @@
     "multer": "^2.4.0",
     "ogg-opus-decoder": "^1.7.5",
     "pdf-parse": "^1.1.1",
-    "pdfkit": "^0.20.2"
+    "pdfkit": "^0.20.2",
+    "serverless-http": "^4.0.0"
   }
 }

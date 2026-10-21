@@ -1,0 +1,24 @@
+# Netlify 站点配置（Netlify + Supabase 部署）
+[build]
+  # 前端构建：frontend 目录，npm run build → dist
+  base = "frontend"
+  command = "npm ci --no-audit --no-fund && npm run build"
+  publish = "dist"
+
+# 后端函数：serverless-http 包装 Express（Node 20 运行时）
+# zip 模式：函数目录 + server/package.json 依赖一起部署（wasm 解码器等特殊包免 esbuild 打包风险）
+[functions]
+  directory = "server/functions"
+  node_bundler = "zip"
+
+# 前端 /api/* 请求重写为函数（保留原路径，Express 路由无需改动）
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/:splat"
+  status = 200
+
+# 根路由健康检查
+[[redirects]]
+  from = "/"
+  to = "/.netlify/functions/api"
+  status = 200
