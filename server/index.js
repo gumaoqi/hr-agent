@@ -744,7 +744,7 @@ app.post('/api/interview-prep', async (req, res) => {
 function buildInterviewPdf({ fileName, job, city, specialNeed, questions }) {
   return new Promise((resolve, reject) => {
     try {
-      const doc = new PDFDocument({ size: 'A4', margin: 50 });
+      const doc = new PDFDocument({ size: 'A4', margin: 50, compress: false });
       const chunks = [];
       doc.on('data', (c) => chunks.push(c));
       doc.on('end', () => resolve(Buffer.concat(chunks)));
@@ -1544,7 +1544,7 @@ app.post('/api/interview-score-query', async (req, res) => {
 function buildScorePdf({ fileName, name, job, city, ai, final, generatedAt }) {
   return new Promise((resolve, reject) => {
     try {
-      const doc = new PDFDocument({ size: 'A4', margin: 50 });
+      const doc = new PDFDocument({ size: 'A4', margin: 50, compress: false });
       const chunks = [];
       doc.on('data', (c) => chunks.push(c));
       doc.on('end', () => resolve(Buffer.concat(chunks)));
