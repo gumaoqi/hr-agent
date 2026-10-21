@@ -1150,6 +1150,31 @@ async function transcribeAudio({ buffer, fileName }) {
 /** 讯飞 urlLink 模式提交转写任务：音频已上传 Supabase Storage，传公共 URL 即可（配合 Netlify 函数 26s 超时限制，提交后由前端轮询）
  * 返回 orderId 与 signatureRandom（查询必须与上传一致）
  */
+const https = require('node:https');
+
+/** 基于 Node 内置 https 的请求助手：可放宽 connect 超时（函数环境跨太平洋连讯飞握手可能 >10s，undici 默认 10s 不够） */
+function httpsRequestJson({ hostname, path: reqPath, method = 'POST', headers = {}, body = Buffer.alloc(0), connectTimeoutMs = 20000, totalTimeoutMs = 25000 }) {
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      { hostname, path: reqPath, method, headers },
+      (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => {
+          const buf = Buffer.concat(chunks);
+          resolve({ status: res.statusCode, headers: res.headers, body: buf });
+        });
+      },
+    );
+    req.setTimeout(totalTimeoutMs, () => req.destroy(new Error(`请求超时（${totalTimeoutMs}ms）`)));
+    req.on('socket', (socket) => {
+      socket.setTimeout(connectTimeoutMs, () => req.destroy(new Error(`连接超时（${connectTimeoutMs}ms）`)));
+    });
+    req.on('error', reject);
+    req.end(body);
+  });
+}
+
 async function submitAsrByUrl(audioUrl, fileSize) {
   if (!XF_APP_ID || !XF_API_KEY || !XF_APISECRET) {
     throw new Error('未配置讯飞转写凭据（server/.env 的 XF_APP_ID / XF_API_KEY / XF_APISECRET），请改用转录文本');
@@ -1183,18 +1208,21 @@ async function submitAsrByUrl(audioUrl, fileSize) {
     roleType: '1', // 通用角色分离（面试双人场景）
   };
   const uploadUrl = `https://${HOST}/v2/upload?${buildQuery(uploadParams)}`;
-  const uploadRes = await fetch(uploadUrl, {
-    method: 'POST',
+  const parsedUrl = new URL(uploadUrl);
+  const uploadRes = await httpsRequestJson({
+    hostname: parsedUrl.hostname,
+    path: parsedUrl.pathname + parsedUrl.search,
     headers: {
       'Content-Type': 'application/octet-stream',
       signature: xfIfasrSignature(uploadParams, XF_APISECRET),
+      'Content-Length': 0,
     },
     body: Buffer.alloc(0), // urlLink 模式无需上传音频体
   });
-  if (!uploadRes.ok) {
-    throw new Error(`讯飞转写提交失败：HTTP ${uploadRes.status} ${(await uploadRes.text()).slice(0, 200)}`);
+  if (uploadRes.status !== 200) {
+    throw new Error(`讯飞转写提交失败：HTTP ${uploadRes.status} ${uploadRes.body.toString('utf8').slice(0, 200)}`);
   }
-  const uploadData = await uploadRes.json();
+  const uploadData = JSON.parse(uploadRes.body.toString('utf8'));
   if (uploadData.code !== '000000') {
     throw new Error(`讯飞转写提交失败：${uploadData.code} ${uploadData.descInfo || ''}`);
   }
@@ -1215,18 +1243,22 @@ async function queryAsrByOrder(orderId, signatureRandom) {
     orderId,
     resultType: 'transfer',
   };
-  const queryRes = await fetch(`https://${HOST}/v2/getResult?${buildQuery(queryParams)}`, {
-    method: 'POST',
+  const queryUrl = `https://${HOST}/v2/getResult?${buildQuery(queryParams)}`;
+  const parsedQueryUrl = new URL(queryUrl);
+  const queryRes = await httpsRequestJson({
+    hostname: parsedQueryUrl.hostname,
+    path: parsedQueryUrl.pathname + parsedQueryUrl.search,
     headers: {
       'Content-Type': 'application/json',
       signature: xfIfasrSignature(queryParams, XF_APISECRET),
+      'Content-Length': Buffer.byteLength('{}'),
     },
-    body: '{}',
+    body: Buffer.from('{}', 'utf8'),
   });
-  if (!queryRes.ok) {
-    throw new Error(`讯飞任务查询失败：HTTP ${queryRes.status} ${(await queryRes.text()).slice(0, 200)}`);
+  if (queryRes.status !== 200) {
+    throw new Error(`讯飞任务查询失败：HTTP ${queryRes.status} ${queryRes.body.toString('utf8').slice(0, 200)}`);
   }
-  const queryData = await queryRes.json();
+  const queryData = JSON.parse(queryRes.body.toString('utf8'));
   if (queryData.code !== '000000') {
     throw new Error(`讯飞任务查询失败：${queryData.code} ${queryData.descInfo || ''}`);
   }
