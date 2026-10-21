@@ -22,6 +22,6 @@
     "ogg-opus-decoder": "^1.7.5",
     "pdf-parse": "^1.1.1",
     "pdfkit": "^0.20.2",
-    "serverless-http": "^4.0.0"
+    "serverless-http": "^3.2.0"
   }
 }

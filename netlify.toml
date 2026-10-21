@@ -1,5 +1,7 @@
 # Netlify 站点配置（Netlify + Supabase 部署）
 [build]
+  # 强制 Node 22（serverless-http v3 兼容 Node 18+；Express + WASM 解码器需要较新运行时）
+  environment = { NODE_VERSION = "22" }
   # 构建在仓库根执行：先安装 server 依赖（函数打包需要 node_modules），再构建前端
   base = "."
   command = "cd server && npm ci --no-audit --no-fund && cd ../frontend && npm ci --no-audit --no-fund && npm run build"
@@ -11,6 +13,10 @@
 [functions]
   directory = "server/functions"
   node_bundler = "zisi"
+
+# 岗位普查需调用 DeepSeek 搜索+生成，10s 默认超时不够，提升到 26s 上限
+[functions."api"]
+  timeout = 26
 
 # 前端 /api/* 请求重写为函数（Netlify 保留原始 event.path，Express 路由无需改动）
 [[redirects]]
