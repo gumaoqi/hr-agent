@@ -1,9 +1,9 @@
 # Netlify 站点配置（Netlify + Supabase 部署）
 [build]
-  # 前端构建：frontend 目录，npm run build → dist
-  base = "frontend"
-  command = "npm ci --no-audit --no-fund && npm run build"
-  publish = "dist"
+  # 构建在仓库根执行：先安装 server 依赖（函数打包需要 node_modules），再构建前端
+  base = "."
+  command = "cd server && npm ci --no-audit --no-fund && cd ../frontend && npm ci --no-audit --no-fund && npm run build"
+  publish = "frontend/dist"
 
 # 后端函数：serverless-http 包装 Express（Node 20 运行时）
 # zisi 模式（zip-it-and-ship-it）：函数目录 + server/package.json 依赖原样打包部署
@@ -12,10 +12,10 @@
   directory = "server/functions"
   node_bundler = "zisi"
 
-# 前端 /api/* 请求重写为函数（保留原路径，Express 路由无需改动）
+# 前端 /api/* 请求重写为函数（Netlify 保留原始 event.path，Express 路由无需改动）
 [[redirects]]
   from = "/api/*"
-  to = "/.netlify/functions/api/:splat"
+  to = "/.netlify/functions/api"
   status = 200
 
 # 根路由健康检查
