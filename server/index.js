@@ -6,7 +6,7 @@ const crypto = require('node:crypto');
 const path = require('node:path');
 const { createClient } = require('@supabase/supabase-js');
 
-const pdfParse = require('pdf-parse');
+const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
 const PDFDocument = require('pdfkit');
 // 中文 PDF 字体：随仓库携带（server/fonts/simhei.ttf），跨平台可用（Windows/Linux）
 const FONT_PATH = path.join(__dirname, 'fonts', 'simhei.ttf');
@@ -463,6 +463,30 @@ async function getResumeCache(fileName) {
   return null;
 }
 
+/** 纯 JS 解析 PDF 文本（pdfjs-dist legacy build，静态导入，Netlify nft 可正常打包）
+ * 替代 pdf-parse（其内置 PDF.js 用动态模板 require，函数打包器无法追踪导致线上解析失败）
+ */
+async function parsePdfText(buffer) {
+  const data = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+  const doc = await pdfjsLib.getDocument({ data }).promise;
+  try {
+    let text = '';
+    for (let i = 1; i <= doc.numPages; i++) {
+      const page = await doc.getPage(i);
+      const content = await page.getTextContent();
+      const pageText = content.items.map((it) => (typeof it.str === 'string' ? it.str : '')).join(' ');
+      if (pageText.trim()) text += pageText + '\n';
+    }
+    return text;
+  } finally {
+    try {
+      doc.destroy();
+    } catch {
+      // ignore
+    }
+  }
+}
+
 /** 单份简历分析：调用 DeepSeek 输出结构化评估 */
 async function analyzeResume(fileInfo, requirements) {
   const text = (fileInfo.text || '').slice(0, 8000);
@@ -561,8 +585,8 @@ app.post('/api/resume-screening', upload.array('resumes', 20), async (req, res) 
   for (const f of files) {
     const name = fixFileName(f.originalname);
     try {
-      const result = await pdfParse(f.buffer);
-      parsed.push({ originalname: name, text: result.text || '' });
+      const text = await parsePdfText(f.buffer);
+      parsed.push({ originalname: name, text: text || '' });
     } catch (e) {
       console.warn('[resume] PDF 解析失败:', name, e.message);
       parsed.push({ originalname: name, text: '', parseFailed: true });
@@ -1355,7 +1379,7 @@ app.post(
       // 1. 解析问题 PDF 文本
       let questionsText = '';
       try {
-        questionsText = (await pdfParse(questionsPdf.buffer)).text || '';
+        questionsText = await parsePdfText(questionsPdf.buffer);
       } catch {
         return res.status(400).json({ error: '问题 PDF 解析失败，请确认上传的是功能3导出的「预提问」PDF' });
       }

@@ -19,7 +19,7 @@
     "mpg123-decoder": "^1.0.3",
     "multer": "^2.4.0",
     "ogg-opus-decoder": "^1.7.5",
-    "pdf-parse": "^1.1.1",
+    "pdfjs-dist": "^2.16.105",
     "pdfkit": "^0.20.2",
     "serverless-http": "^3.2.0"
   }
