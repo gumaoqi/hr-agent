@@ -2,7 +2,6 @@
   "name": "hr-agent-server",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
   "description": "HR-Agent 人事智能体后端代理服务：调用 DeepSeek Search/Fetch 与 Responses 接口",
   "main": "index.js",
   "scripts": {

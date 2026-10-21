@@ -1,18 +1,15 @@
-import express from 'express';
-import cors from 'cors';
-import dotenv from 'dotenv';
-import multer from 'multer';
-import crypto from 'node:crypto';
-import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
-import path from 'node:path';
-import { createClient } from '@supabase/supabase-js';
+const express = require('express');
+const cors = require('cors');
+const dotenv = require('dotenv');
+const multer = require('multer');
+const crypto = require('node:crypto');
+const path = require('node:path');
+const { createClient } = require('@supabase/supabase-js');
 
-const require = createRequire(import.meta.url);
 const pdfParse = require('pdf-parse');
 const PDFDocument = require('pdfkit');
 // 中文 PDF 字体：随仓库携带（server/fonts/simhei.ttf），跨平台可用（Windows/Linux）
-const FONT_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fonts', 'simhei.ttf');
+const FONT_PATH = path.join(__dirname, 'fonts', 'simhei.ttf');
 // 纯 WASM 音频解码器（无本机二进制依赖）：mp3 / m4a-aac / flac / ogg-opus
 const { MPEGDecoder } = require('mpg123-decoder');
 const { AACDecoder } = require('@wasm-audio-decoders/aac');
@@ -1599,4 +1596,4 @@ if (!process.env.NETLIFY) {
   });
 }
 
-export { app };
+module.exports = { app };
