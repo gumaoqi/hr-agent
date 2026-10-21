@@ -42,6 +42,9 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// 根路由：便于云平台健康检查/排查（Koyeb 等平台部署后可直接访问确认服务在线）
+app.get('/', (req, res) => res.json({ ok: true, service: 'hr-agent-api', time: new Date().toISOString() }));
+
 /** 判断是否为招聘职位页（优先 BOSS 直聘职位详情/列表；排除投资者关系、政务、社区、PDF 等页面） */
 function isJobPageUrl(url) {
   if (!url) return false;
@@ -1076,10 +1079,11 @@ async function aiInterviewScore({ resumeText, job, questions, transcript }) {
   };
 }
 
-// 面试评分上传：问题 PDF（必传 1 个）+ 面试录音（可选，≤200MB）+ 转写文本文件（可选，≤2MB）
+// 面试评分上传：问题 PDF（必传 1 个）+ 面试录音（可选，≤50MB）+ 转写文本文件（可选，≤2MB）
+// 50MB 上限兼顾免费实例内存（如 Koyeb Nano 256MB）：正常面试录音（mp3 30-60 分钟）约 5-20MB
 const scoreUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { files: 3, fileSize: 200 * 1024 * 1024 },
+  limits: { files: 3, fileSize: 50 * 1024 * 1024 },
 });
 
 /** 读取同事上传的转写文本文件（.txt/.md/.docx，docx 用 mammoth 解析） */

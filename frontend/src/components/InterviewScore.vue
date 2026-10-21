@@ -181,7 +181,7 @@ async function exportPdf() {
       </div>
       <div v-if="materialMode === 'audio'" class="row">
         <label class="file-label">
-          面试录音（mp3/wav/m4a 等，≤200MB，自动讯飞转写）
+          面试录音（mp3/wav/m4a 等，≤50MB，自动讯飞转写）
           <input type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.opus,.flac,.ogg,.amr" @change="onAudio" />
         </label>
         <span v-if="audioFile" class="ok">已选择：{{ audioFile.name }}</span>
