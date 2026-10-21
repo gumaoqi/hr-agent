@@ -12,7 +12,14 @@ const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
 require('pdfjs-dist/legacy/build/pdf.worker.js');
 const PDFDocument = require('pdfkit');
 // 中文 PDF 字体：随仓库携带（server/fonts/simhei.ttf），跨平台可用（Windows/Linux）
-const FONT_PATH = path.join(__dirname, 'fonts', 'simhei.ttf');
+// 函数部署（Netlify）时字体可能位于 zip 根或保留 server/ 相对路径，做多候选查找
+const fs = require('node:fs');
+const FONT_CANDIDATES = [
+  path.join(__dirname, 'fonts', 'simhei.ttf'),
+  path.join(__dirname, 'server', 'fonts', 'simhei.ttf'),
+  path.join(__dirname, 'functions', 'fonts', 'simhei.ttf'),
+];
+const FONT_PATH = FONT_CANDIDATES.find((p) => fs.existsSync(p)) || FONT_CANDIDATES[0];
 // 纯 WASM 音频解码器（无本机二进制依赖）：mp3 / m4a-aac / flac / ogg-opus
 // 这些包为 ESM 格式，在 decodeAudioTo16kWav 内按需动态 import()（兼容任意 Node 运行时）
 
@@ -470,6 +477,11 @@ async function getResumeCache(fileName) {
  * 替代 pdf-parse（其内置 PDF.js 用动态模板 require，函数打包器无法追踪导致线上解析失败）
  */
 async function parsePdfText(buffer) {
+  // 识别非标准 PDF（腾讯系/文档站下载的 %TSD-Header 加密壳），给出明确提示而非晦涩的结构错误
+  const head = Buffer.from(buffer.buffer, buffer.byteOffset, Math.min(buffer.byteLength, 48)).toString('latin1');
+  if (head.startsWith('%TSD-') || head.includes('%TSD-Header')) {
+    throw new Error('文件疑似加密格式（%TSD-Header，常见于腾讯系传输或文档网站下载），不是标准 PDF，请重新导出为标准 PDF 后上传');
+  }
   const data = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
   const doc = await pdfjsLib.getDocument({ data }).promise;
   try {
