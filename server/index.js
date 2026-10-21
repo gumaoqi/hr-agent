@@ -7,6 +7,9 @@ const path = require('node:path');
 const { createClient } = require('@supabase/supabase-js');
 
 const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
+// 预加载 worker 脚本：pdfjs 在 Node 用 fake worker，运行时相对 require('./pdf.worker.js')，
+// 静态 require 一次让函数打包器（nft）能追踪该文件进部署包，且运行时命中模块缓存
+require('pdfjs-dist/legacy/build/pdf.worker.js');
 const PDFDocument = require('pdfkit');
 // 中文 PDF 字体：随仓库携带（server/fonts/simhei.ttf），跨平台可用（Windows/Linux）
 const FONT_PATH = path.join(__dirname, 'fonts', 'simhei.ttf');
