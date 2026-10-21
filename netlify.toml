@@ -6,10 +6,11 @@
   publish = "dist"
 
 # 后端函数：serverless-http 包装 Express（Node 20 运行时）
-# zip 模式：函数目录 + server/package.json 依赖一起部署（wasm 解码器等特殊包免 esbuild 打包风险）
+# zisi 模式（zip-it-and-ship-it）：函数目录 + server/package.json 依赖原样打包部署
+# （wasm 解码器等特殊包免 esbuild 打包风险）
 [functions]
   directory = "server/functions"
-  node_bundler = "zip"
+  node_bundler = "zisi"
 
 # 前端 /api/* 请求重写为函数（保留原路径，Express 路由无需改动）
 [[redirects]]
