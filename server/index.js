@@ -11,10 +11,7 @@ const PDFDocument = require('pdfkit');
 // 中文 PDF 字体：随仓库携带（server/fonts/simhei.ttf），跨平台可用（Windows/Linux）
 const FONT_PATH = path.join(__dirname, 'fonts', 'simhei.ttf');
 // 纯 WASM 音频解码器（无本机二进制依赖）：mp3 / m4a-aac / flac / ogg-opus
-const { MPEGDecoder } = require('mpg123-decoder');
-const { AACDecoder } = require('@wasm-audio-decoders/aac');
-const { FLACDecoder } = require('@wasm-audio-decoders/flac');
-const { OggOpusDecoder } = require('ogg-opus-decoder');
+// 这些包为 ESM 格式，在 decodeAudioTo16kWav 内按需动态 import()（兼容任意 Node 运行时）
 
 dotenv.config();
 
@@ -853,10 +850,10 @@ async function decodeAudioTo16kWav(buffer, fileName) {
     sampleRate = parsed.sampleRate;
   } else {
     let Decoder = null;
-    if (ext === 'mp3') Decoder = MPEGDecoder;
-    else if (ext === 'm4a' || ext === 'aac' || ext === 'mp4') Decoder = AACDecoder;
-    else if (ext === 'flac') Decoder = FLACDecoder;
-    else if (ext === 'ogg' || ext === 'opus' || ext === 'oga') Decoder = OggOpusDecoder;
+    if (ext === 'mp3') Decoder = (await import('mpg123-decoder')).MPEGDecoder;
+    else if (ext === 'm4a' || ext === 'aac' || ext === 'mp4') Decoder = (await import('@wasm-audio-decoders/aac')).AACDecoder;
+    else if (ext === 'flac') Decoder = (await import('@wasm-audio-decoders/flac')).FLACDecoder;
+    else if (ext === 'ogg' || ext === 'opus' || ext === 'oga') Decoder = (await import('ogg-opus-decoder')).OggOpusDecoder;
     else throw new Error(`暂不支持 .${ext || '未知'} 格式，请上传 wav/mp3/m4a/aac/flac/ogg 音频，或改用转录文本`);
     const decoder = new Decoder();
     try {
