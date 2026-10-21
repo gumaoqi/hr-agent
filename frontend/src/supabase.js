@@ -1,8 +1,12 @@
 // Supabase 客户端（前端仅用 anon key + 公开桶直传录音；service_role key 严禁出现在前端）
+// URL 与 anon key 为 Supabase 设计上的公开值（浏览器可访问），写为默认值便于部署
+// 也可通过 VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY 环境变量覆盖
 import { createClient } from '@supabase/supabase-js';
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || 'https://slemwwuwsfypmxmpoeqh.supabase.co';
+const SUPABASE_ANON_KEY =
+  import.meta.env.VITE_SUPABASE_ANON_KEY ||
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNsZW13d3V3c2Z5cG14bXBvZXFoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxNTk0NzksImV4cCI6MjA5NDczNTQ3OX0.7bBIKYlmy2j3fpja6CTFoTtyZsnD1kIiItZ_REOQFkg';
 
 export const supabase = SUPABASE_URL && SUPABASE_ANON_KEY ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 export const AUDIO_BUCKET = 'hr-audio';
