@@ -4,10 +4,14 @@ import dotenv from 'dotenv';
 import multer from 'multer';
 import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 
 const require = createRequire(import.meta.url);
 const pdfParse = require('pdf-parse');
 const PDFDocument = require('pdfkit');
+// 中文 PDF 字体：随仓库携带（server/fonts/simhei.ttf），跨平台可用（Windows/Linux）
+const FONT_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fonts', 'simhei.ttf');
 // 纯 WASM 音频解码器（无本机二进制依赖）：mp3 / m4a-aac / flac / ogg-opus
 const { MPEGDecoder } = require('mpg123-decoder');
 const { AACDecoder } = require('@wasm-audio-decoders/aac');
@@ -620,7 +624,7 @@ function buildInterviewPdf({ fileName, job, city, specialNeed, questions }) {
       doc.on('end', () => resolve(Buffer.concat(chunks)));
       doc.on('error', reject);
 
-      const fontPath = 'C:/Windows/Fonts/simhei.ttf';
+      const fontPath = FONT_PATH;
       doc.registerFont('hei', fontPath);
       doc.font('hei');
 
@@ -1195,7 +1199,7 @@ function buildScorePdf({ fileName, name, job, city, ai, final, generatedAt }) {
       doc.on('end', () => resolve(Buffer.concat(chunks)));
       doc.on('error', reject);
 
-      const fontPath = 'C:/Windows/Fonts/simhei.ttf';
+      const fontPath = FONT_PATH;
       doc.registerFont('hei', fontPath);
       doc.font('hei');
 
