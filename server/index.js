@@ -11,6 +11,22 @@ const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
 // 静态 require 一次让函数打包器（nft）能追踪该文件进部署包，且运行时命中模块缓存
 require('pdfjs-dist/legacy/build/pdf.worker.js');
 const PDFDocument = require('pdfkit');
+// pdfkit 运行时按需 require 内置标准字体（动态路径，打包器无法追踪），
+// 静态预加载 14 个 .cjs 让 nft 打包进函数 + 运行时命中 require 缓存（与 pdf.worker.js 同方案）
+require('./node_modules/pdfkit/js/standard-fonts/Helvetica.cjs');
+require('./node_modules/pdfkit/js/standard-fonts/HelveticaBold.cjs');
+require('./node_modules/pdfkit/js/standard-fonts/HelveticaBoldOblique.cjs');
+require('./node_modules/pdfkit/js/standard-fonts/HelveticaOblique.cjs');
+require('./node_modules/pdfkit/js/standard-fonts/Courier.cjs');
+require('./node_modules/pdfkit/js/standard-fonts/CourierBold.cjs');
+require('./node_modules/pdfkit/js/standard-fonts/CourierBoldOblique.cjs');
+require('./node_modules/pdfkit/js/standard-fonts/CourierOblique.cjs');
+require('./node_modules/pdfkit/js/standard-fonts/Symbol.cjs');
+require('./node_modules/pdfkit/js/standard-fonts/TimesBold.cjs');
+require('./node_modules/pdfkit/js/standard-fonts/TimesBoldItalic.cjs');
+require('./node_modules/pdfkit/js/standard-fonts/TimesItalic.cjs');
+require('./node_modules/pdfkit/js/standard-fonts/TimesRoman.cjs');
+require('./node_modules/pdfkit/js/standard-fonts/ZapfDingbats.cjs');
 // 中文 PDF 字体：随仓库携带（server/fonts/simhei.ttf），跨平台可用（Windows/Linux）
 // 函数部署（Netlify）时字体可能位于 zip 根或保留 server/ 相对路径，做多候选查找
 const fs = require('node:fs');
