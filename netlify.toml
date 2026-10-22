@@ -17,10 +17,8 @@
   node_bundler = "nft"
 
 # 岗位普查需调用 DeepSeek 搜索+生成，10s 默认超时不够，提升到 26s 上限
-# included_files 打包 pdfkit 中文 TT 字体（运行时路径 nft 无法静态追踪）
 [functions."api"]
   timeout = 26
-  included_files = ["server/fonts/simhei.ttf"]
 
 # 前端 /api/* 请求重写为函数（Netlify 保留原始 event.path，Express 路由无需改动）
 [[redirects]]

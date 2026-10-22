@@ -10,32 +10,6 @@ const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
 // 预加载 worker 脚本：pdfjs 在 Node 用 fake worker，运行时相对 require('./pdf.worker.js')，
 // 静态 require 一次让函数打包器（nft）能追踪该文件进部署包，且运行时命中模块缓存
 require('pdfjs-dist/legacy/build/pdf.worker.js');
-const PDFDocument = require('pdfkit');
-// pdfkit 运行时按需 require 内置标准字体（动态路径，打包器无法追踪），
-// 静态预加载 14 个 .cjs 让 nft 打包进函数 + 运行时命中 require 缓存（与 pdf.worker.js 同方案）
-require('./node_modules/pdfkit/js/standard-fonts/Helvetica.cjs');
-require('./node_modules/pdfkit/js/standard-fonts/HelveticaBold.cjs');
-require('./node_modules/pdfkit/js/standard-fonts/HelveticaBoldOblique.cjs');
-require('./node_modules/pdfkit/js/standard-fonts/HelveticaOblique.cjs');
-require('./node_modules/pdfkit/js/standard-fonts/Courier.cjs');
-require('./node_modules/pdfkit/js/standard-fonts/CourierBold.cjs');
-require('./node_modules/pdfkit/js/standard-fonts/CourierBoldOblique.cjs');
-require('./node_modules/pdfkit/js/standard-fonts/CourierOblique.cjs');
-require('./node_modules/pdfkit/js/standard-fonts/Symbol.cjs');
-require('./node_modules/pdfkit/js/standard-fonts/TimesBold.cjs');
-require('./node_modules/pdfkit/js/standard-fonts/TimesBoldItalic.cjs');
-require('./node_modules/pdfkit/js/standard-fonts/TimesItalic.cjs');
-require('./node_modules/pdfkit/js/standard-fonts/TimesRoman.cjs');
-require('./node_modules/pdfkit/js/standard-fonts/ZapfDingbats.cjs');
-// 中文 PDF 字体：随仓库携带（server/fonts/simhei.ttf），跨平台可用（Windows/Linux）
-// 函数部署（Netlify）时字体可能位于 zip 根或保留 server/ 相对路径，做多候选查找
-const fs = require('node:fs');
-const FONT_CANDIDATES = [
-  path.join(__dirname, 'fonts', 'simhei.ttf'),
-  path.join(__dirname, 'server', 'fonts', 'simhei.ttf'),
-  path.join(__dirname, 'functions', 'fonts', 'simhei.ttf'),
-];
-const FONT_PATH = FONT_CANDIDATES.find((p) => fs.existsSync(p)) || FONT_CANDIDATES[0];
 // 纯 WASM 音频解码器（无本机二进制依赖）：mp3 / m4a-aac / flac / ogg-opus
 // 这些包为 ESM 格式，在 decodeAudioTo16kWav 内按需动态 import()（兼容任意 Node 运行时）
 
@@ -782,44 +756,26 @@ app.post('/api/interview-prep', async (req, res) => {
   }
 });
 
-/** 用 pdfkit 生成面试预提问 PDF */
-function buildInterviewPdf({ fileName, job, city, specialNeed, questions }) {
-  return new Promise((resolve, reject) => {
-    try {
-      const doc = new PDFDocument({ size: 'A4', margin: 50, compress: false });
-      const chunks = [];
-      doc.on('data', (c) => chunks.push(c));
-      doc.on('end', () => resolve(Buffer.concat(chunks)));
-      doc.on('error', reject);
-
-      const fontPath = FONT_PATH;
-      doc.registerFont('hei', fontPath);
-      doc.font('hei');
-
-      doc.fontSize(20).text('面试预提问清单', { align: 'center' });
-      doc.moveDown(1.2);
-      doc.fontSize(12).text(`候选人简历：${fileName}`);
-      doc.text(`岗位信息：${job || '未知'}${city ? `（${city}）` : ''}`);
-      doc.text(`特别需求：${specialNeed || '无'}`);
-      doc.text(`生成日期：${new Date().toLocaleDateString('zh-CN')}`);
-      doc.moveDown(1.2);
-
-      (questions || []).forEach((q, i) => {
-        doc.fontSize(12).text(`${i + 1}. ${q.q || q}`, { lineGap: 4 });
-        if (q.intent) {
-          doc.fontSize(10).text(`　考察意图：${q.intent}`, { indent: 14, lineGap: 6 });
-        }
-        doc.moveDown(0.6);
-      });
-
-      doc.end();
-    } catch (e) {
-      reject(e);
+/** 生成面试预提问 Markdown 文档（替代原 PDF，文本更易阅读、编辑与归档） */
+function buildInterviewMd({ fileName, job, city, specialNeed, questions }) {
+  const lines = [];
+  lines.push('# 面试预提问清单', '');
+  lines.push(`- 候选人简历：${fileName}`);
+  lines.push(`- 岗位信息：${job || '未知'}${city ? `（${city}）` : ''}`);
+  lines.push(`- 特别需求：${specialNeed || '无'}`);
+  lines.push(`- 生成日期：${new Date().toLocaleDateString('zh-CN')}`);
+  lines.push('');
+  (questions || []).forEach((q, i) => {
+    lines.push(`${i + 1}. **${q.q || q}**`);
+    if (q.intent) {
+      lines.push(`   - 考察意图：${q.intent}`);
     }
+    lines.push('');
   });
+  return lines.join('\n');
 }
 
-app.post('/api/interview-pdf', async (req, res) => {
+app.post('/api/interview-md', async (req, res) => {
   const { fileName, questions, specialNeed } = req.body || {};
   if (!fileName) {
     return res.status(400).json({ error: '缺少简历名' });
@@ -827,20 +783,20 @@ app.post('/api/interview-pdf', async (req, res) => {
   const cached = await getResumeCache(fileName);
   const qs = Array.isArray(questions) ? questions.filter((x) => x && x.q) : [];
   try {
-    const pdf = await buildInterviewPdf({
+    const md = buildInterviewMd({
       fileName,
       job: cached?.job,
       city: cached?.city,
       specialNeed: specialNeed || cached?.other,
       questions: qs,
     });
-    const baseName = fileName.replace(/\.pdf$/i, '');
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(`${baseName}-预提问.pdf`)}`);
-    res.send(pdf);
+    const baseName = fileName.replace(/\.[^.]+$/, '');
+    res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(`${baseName}-预提问.md`)}`);
+    res.send(md);
   } catch (e) {
-    console.error('[interview-pdf] 生成失败:', e.message);
-    res.status(500).json({ error: `PDF 生成失败：${e.message}` });
+    console.error('[interview-md] 生成失败:', e.message);
+    res.status(500).json({ error: `Markdown 生成失败：${e.message}` });
   }
 });
 
@@ -1457,13 +1413,13 @@ async function readTranscriptFile(file) {
 app.post(
   '/api/interview-score',
   scoreUpload.fields([
-    { name: 'questionsPdf', maxCount: 1 },
+    { name: 'questionsDoc', maxCount: 1 },
     { name: 'audio', maxCount: 1 },
     { name: 'transcriptFile', maxCount: 1 },
   ]),
   async (req, res) => {
     const { resumeFileName, transcript, audioUrl, audioSize } = req.body || {};
-    const questionsPdf = req.files?.questionsPdf?.[0];
+    const questionsDoc = req.files?.questionsDoc?.[0];
     const audio = req.files?.audio?.[0];
     const transcriptFile = req.files?.transcriptFile?.[0];
 
@@ -1474,8 +1430,8 @@ app.post(
     if (!cached) {
       return res.status(404).json({ error: '未找到该简历的筛选记录，请先在「简历筛选」中上传简历打分' });
     }
-    if (!questionsPdf) {
-      return res.status(400).json({ error: '请上传功能3导出的面试问题 PDF' });
+    if (!questionsDoc) {
+      return res.status(400).json({ error: '请上传功能3导出的面试问题 Markdown 文档' });
     }
     const manualTranscript = (transcript || '').trim();
     if (!audioUrl && !audio && !manualTranscript && !transcriptFile) {
@@ -1483,15 +1439,15 @@ app.post(
     }
 
     try {
-      // 1. 解析问题 PDF 文本
+      // 1. 解析问题文档文本（md/txt 直接读取，docx 转文本）
       let questionsText = '';
       try {
-        questionsText = await parsePdfText(questionsPdf.buffer);
+        questionsText = await extractResumeText(questionsDoc);
       } catch {
-        return res.status(400).json({ error: '问题 PDF 解析失败，请确认上传的是功能3导出的「预提问」PDF' });
+        return res.status(400).json({ error: '问题文档解析失败，请确认上传的是功能3导出的「预提问」Markdown 文档' });
       }
       if (!questionsText.trim()) {
-        return res.status(400).json({ error: '问题 PDF 无法解析出文本' });
+        return res.status(400).json({ error: '问题文档无法解析出文本' });
       }
 
       // 2a. 录音已由前端直传 Supabase Storage（Netlify 场景）→ 异步提交讯飞转写，返回订单号由前端轮询
@@ -1614,91 +1570,59 @@ app.post('/api/interview-score-query', async (req, res) => {
   }
 });
 
-/** 用 pdfkit 生成面试评分报告 PDF（AI 评分与人工调整后最终评分对照） */
-function buildScorePdf({ fileName, name, job, city, ai, final, generatedAt }) {
-  return new Promise((resolve, reject) => {
-    try {
-      const doc = new PDFDocument({ size: 'A4', margin: 50, compress: false });
-      const chunks = [];
-      doc.on('data', (c) => chunks.push(c));
-      doc.on('end', () => resolve(Buffer.concat(chunks)));
-      doc.on('error', reject);
-
-      const fontPath = FONT_PATH;
-      doc.registerFont('hei', fontPath);
-      doc.font('hei');
-
-      doc.fontSize(20).text('面试评分报告', { align: 'center' });
-      doc.moveDown(1.2);
-      doc.fontSize(12).text(`候选人：${name}`);
-      doc.text(`岗位：${job || '未知'}${city ? `（${city}）` : ''}`);
-      doc.text(`简历文件：${fileName}`);
-      doc.text(`生成日期：${generatedAt}`);
-      doc.moveDown(1);
-
-      doc.fontSize(14).text('一、评分汇总', { underline: true });
-      doc.moveDown(0.4);
-      doc.fontSize(12).text(`综合评分：AI ${ai.totalScore ?? '—'} 分　／　最终 ${final.totalScore ?? '—'} 分`);
-      for (const d of SCORE_DIMS) {
-        const label = SCORE_DIM_LABELS[d] || d;
-        doc.text(`${label}：AI ${ai.dimensions?.[d] ?? '—'} 分　／　最终 ${final.dimensions?.[d] ?? '—'} 分`);
-      }
-      doc.moveDown(1);
-
-      doc.fontSize(14).text('二、面试优势', { underline: true });
-      doc.moveDown(0.4);
-      doc.fontSize(12).text(final.strengths || '未填写', { lineGap: 4 });
-      doc.moveDown(0.8);
-
-      doc.fontSize(14).text('三、面试劣势与不足', { underline: true });
-      doc.moveDown(0.4);
-      doc.fontSize(12).text(final.weaknesses || '未填写', { lineGap: 4 });
-      doc.moveDown(0.8);
-
-      doc.fontSize(14).text('四、整体面试表现', { underline: true });
-      doc.moveDown(0.4);
-      doc.fontSize(12).text(final.performance || '未填写', { lineGap: 4 });
-      doc.moveDown(0.8);
-
-      doc.fontSize(14).text('五、后续建议', { underline: true });
-      doc.moveDown(0.4);
-      doc.fontSize(12).text(final.suggestion || '未填写', { lineGap: 4 });
-      doc.moveDown(0.8);
-
-      doc.fontSize(14).text('六、人工评价', { underline: true });
-      doc.moveDown(0.4);
-      doc.fontSize(12).text(final.comment || '未填写', { lineGap: 4 });
-
-      doc.end();
-    } catch (e) {
-      reject(e);
-    }
-  });
+/** 生成面试评分报告 Markdown（AI 评分与人工调整后最终评分对照，替代原 PDF） */
+function buildScoreMd({ fileName, name, job, city, ai, final, generatedAt }) {
+  const lines = [];
+  lines.push('# 面试评分报告', '');
+  lines.push(`- 候选人：${name}`);
+  lines.push(`- 岗位：${job || '未知'}${city ? `（${city}）` : ''}`);
+  lines.push(`- 简历文件：${fileName}`);
+  lines.push(`- 生成日期：${generatedAt}`);
+  lines.push('');
+  lines.push('## 一、评分汇总', '');
+  lines.push(`综合评分：AI **${ai.totalScore ?? '—'}** 分　／　最终 **${final.totalScore ?? '—'}** 分`, '');
+  lines.push('');
+  for (const d of SCORE_DIMS) {
+    const label = SCORE_DIM_LABELS[d] || d;
+    lines.push(`- ${label}：AI ${ai.dimensions?.[d] ?? '—'} 分　／　最终 ${final.dimensions?.[d] ?? '—'} 分`);
+  }
+  lines.push('');
+  lines.push('## 二、面试优势', '');
+  lines.push(final.strengths || '未填写', '');
+  lines.push('## 三、面试劣势与不足', '');
+  lines.push(final.weaknesses || '未填写', '');
+  lines.push('## 四、整体面试表现', '');
+  lines.push(final.performance || '未填写', '');
+  lines.push('## 五、后续建议', '');
+  lines.push(final.suggestion || '未填写', '');
+  lines.push('## 六、人工评价', '');
+  lines.push(final.comment || '未填写', '');
+  return lines.join('\n');
 }
 
-app.post('/api/score-pdf', async (req, res) => {
+app.post('/api/score-md', async (req, res) => {
   const { resumeFileName, ai, final } = req.body || {};
   if (!resumeFileName || !ai || !final) {
     return res.status(400).json({ error: '缺少评分数据' });
   }
   const cached = resumeCache.get(resumeFileName);
   try {
-    const pdf = await buildScorePdf({
+    const md = buildScoreMd({
       fileName: resumeFileName,
-      name: cached?.name || resumeFileName.replace(/\.pdf$/i, ''),
+      name: cached?.name || resumeFileName.replace(/\.[^.]+$/, ''),
       job: cached?.job,
       city: cached?.city,
       ai,
       final,
       generatedAt: new Date().toLocaleDateString('zh-CN'),
     });
-    const baseName = resumeFileName.replace(/\.pdf$/i, '');
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(`${baseName}-面试评分.pdf`)}`);
-    res.send(pdf);
+    const baseName = resumeFileName.replace(/\.[^.]+$/, '');
+    res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(`${baseName}-面试评分.md`)}`);
+    res.send(md);
   } catch (e) {
-    console.error('[score-pdf] 生成失败:', e.message);
-    res.status(500).json({ error: `PDF 生成失败：${e.message}` });
+    console.error('[score-md] 生成失败:', e.message);
+    res.status(500).json({ error: `Markdown 生成失败：${e.message}` });
   }
 });
 
@@ -1710,9 +1634,9 @@ app.get('/', (_req, res) => {
       census: 'POST /api/census',
       resumeScreening: 'POST /api/resume-screening',
       interviewPrep: 'POST /api/interview-prep',
-      interviewPdf: 'POST /api/interview-pdf',
+      interviewMd: 'POST /api/interview-md',
       interviewScore: 'POST /api/interview-score',
-      scorePdf: 'POST /api/score-pdf',
+      scoreMd: 'POST /api/score-md',
     },
   });
 });

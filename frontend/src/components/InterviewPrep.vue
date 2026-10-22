@@ -122,8 +122,8 @@ function clearQueue() {
   persistQueue();
 }
 
-// ---------- 导出 PDF ----------
-async function downloadPdf() {
+// ---------- 导出 Markdown 提问文档 ----------
+async function downloadMd() {
   error.value = '';
   const qs = currentQueue.value;
   if (!selectedFile.value) {
@@ -136,7 +136,7 @@ async function downloadPdf() {
   }
   loading.value = true;
   try {
-    const resp = await fetch(`${API_BASE}/api/interview-pdf`, {
+    const resp = await fetch(`${API_BASE}/api/interview-md`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ fileName: selectedFile.value, questions: qs, specialNeed: specialNeed.value.trim() }),
@@ -145,18 +145,19 @@ async function downloadPdf() {
       const data = await resp.json().catch(() => null);
       throw new Error((data && data.error) || `请求失败（HTTP ${resp.status}）`);
     }
-    const blob = await resp.blob();
-    const baseName = selectedFile.value.replace(/\.pdf$/i, '');
+    const text = await resp.text();
+    const baseName = selectedFile.value.replace(/\.[^.]+$/, '');
+    const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${baseName}-预提问.pdf`;
+    a.download = `${baseName}-预提问.md`;
     document.body.appendChild(a);
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
   } catch (e) {
-    error.value = e.message || 'PDF 生成失败，请稍后重试';
+    error.value = e.message || 'Markdown 生成失败，请稍后重试';
   } finally {
     loading.value = false;
   }
@@ -166,7 +167,7 @@ async function downloadPdf() {
 <template>
   <section class="interview">
     <h2>面试准备</h2>
-    <p class="desc">从最近打分的简历中选择候选人，基于简历与特别需求生成面试问题，勾选加入待询问列表，最后导出 PDF 提问清单。</p>
+    <p class="desc">从最近打分的简历中选择候选人，基于简历与特别需求生成面试问题，勾选加入待询问列表，最后导出 Markdown 提问文档。</p>
 
     <div class="layout">
       <div class="left">
@@ -225,8 +226,8 @@ async function downloadPdf() {
           </div>
           <div class="queue-actions" v-if="currentQueue.length">
             <button class="btn danger" @click="clearQueue">清空列表</button>
-            <button class="btn primary" :disabled="loading" @click="downloadPdf">
-              {{ loading ? '生成中…' : '生成待询问 PDF' }}
+            <button class="btn primary" :disabled="loading" @click="downloadMd">
+              {{ loading ? '生成中…' : '生成待询问 Markdown' }}
             </button>
           </div>
         </div>

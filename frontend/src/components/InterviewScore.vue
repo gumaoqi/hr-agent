@@ -5,7 +5,7 @@ import { uploadInterviewAudio } from '../supabase.js';
 
 const records = ref([]);
 const selectedFile = ref('');
-const questionsPdf = ref(null);
+const questionsDoc = ref(null);
 const audioFile = ref(null);
 const transcriptFile = ref(null);
 const transcriptText = ref('');
@@ -31,9 +31,9 @@ function formatTime(ts) {
   return `${d.getMonth() + 1}月${d.getDate()}日`;
 }
 
-function onQuestionsPdf(e) {
+function onQuestionsDoc(e) {
   const f = e.target.files?.[0];
-  questionsPdf.value = f || null;
+  questionsDoc.value = f || null;
   error.value = '';
 }
 function onAudio(e) {
@@ -47,7 +47,7 @@ function onTranscriptFile(e) {
   error.value = '';
 }
 
-/** 评分请求：问题 PDF 必传；录音 / 转写文本文件 / 粘贴文本三选一（有文本优先，后端自动跳过讯飞转写）
+/** 评分请求：问题 Markdown 文档必传；录音 / 转写文本文件 / 粘贴文本三选一（有文本优先，后端自动跳过讯飞转写）
  * 录音路径：优先直传 Supabase Storage（Netlify 部署）→ 后端提交讯飞异步转写 → 前端轮询查询；
  * 未配置 Supabase 时回退本地直传后端同步转写（自托管模式）
  */
@@ -57,8 +57,8 @@ async function startScore() {
     error.value = '请选择一份简历';
     return;
   }
-  if (!questionsPdf.value) {
-    error.value = '请上传功能3导出的面试问题 PDF';
+  if (!questionsDoc.value) {
+    error.value = '请上传功能3导出的面试问题 Markdown 文档';
     return;
   }
   if (materialMode.value === 'audio' && !audioFile.value) {
@@ -83,7 +83,7 @@ async function startScore() {
   final.value = null;
   const fd = new FormData();
   fd.append('resumeFileName', selectedFile.value);
-  fd.append('questionsPdf', questionsPdf.value);
+  fd.append('questionsDoc', questionsDoc.value);
   if (transcriptFile.value) fd.append('transcriptFile', transcriptFile.value);
   if (transcriptText.value.trim()) fd.append('transcript', transcriptText.value.trim());
   try {
@@ -149,7 +149,7 @@ async function startScore() {
   }
 }
 
-async function exportPdf() {
+async function exportMd() {
   error.value = '';
   if (!result.value || !final.value) {
     error.value = '请先完成 AI 评分';
@@ -157,7 +157,7 @@ async function exportPdf() {
   }
   loading.value = true;
   try {
-    const resp = await fetch(`${API_BASE}/api/score-pdf`, {
+    const resp = await fetch(`${API_BASE}/api/score-md`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -170,18 +170,19 @@ async function exportPdf() {
       const data = await resp.json().catch(() => null);
       throw new Error((data && data.error) || `请求失败（HTTP ${resp.status}）`);
     }
-    const blob = await resp.blob();
-    const baseName = result.value.resumeFileName.replace(/\.pdf$/i, '');
+    const text = await resp.text();
+    const baseName = result.value.resumeFileName.replace(/\.[^.]+$/, '');
+    const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${baseName}-面试评分.pdf`;
+    a.download = `${baseName}-面试评分.md`;
     document.body.appendChild(a);
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
   } catch (e) {
-    error.value = e.message || 'PDF 生成失败，请稍后重试';
+    error.value = e.message || 'Markdown 生成失败，请稍后重试';
   } finally {
     loading.value = false;
   }
@@ -192,9 +193,9 @@ async function exportPdf() {
   <section class="score">
     <h2>面试评分</h2>
     <p class="desc">
-      选择功能2打分的简历、上传功能3导出的问题 PDF，并任选其一：上传面试录音（自动经讯飞转写）、
+      选择功能2打分的简历、上传功能3导出的问题 Markdown 文档，并任选其一：上传面试录音（自动经讯飞转写）、
       上传转写文本文件（.txt/.md/.docx）或直接粘贴转录文本；由大模型对候选人面试表现进行 AI 评分与分析，
-      可手动调整打分与评价后导出结果 PDF。
+      可手动调整打分与评价后导出结果 Markdown。
     </p>
 
     <div v-if="error" class="error">{{ error }}</div>
@@ -213,10 +214,10 @@ async function exportPdf() {
       <h3>② 面试材料</h3>
       <div class="row">
         <label class="file-label">
-          问题 PDF（功能3导出的"预提问"文件）
-          <input type="file" accept=".pdf" @change="onQuestionsPdf" />
+          问题 Markdown（功能3导出的"预提问"文档）
+          <input type="file" accept=".md,.txt,.docx,text/markdown,text/plain" @change="onQuestionsDoc" />
         </label>
-        <span v-if="questionsPdf" class="ok">已选择：{{ questionsPdf.name }}</span>
+        <span v-if="questionsDoc" class="ok">已选择：{{ questionsDoc.name }}</span>
       </div>
       <div class="row modes">
         <label class="mode"><input type="radio" value="audio" v-model="materialMode" /> 上传面试录音</label>
@@ -293,8 +294,8 @@ async function exportPdf() {
           <label>建议<textarea v-model="final.suggestion" class="ta" rows="2"></textarea></label>
           <label>人工评价<textarea v-model="final.comment" class="ta" rows="2" placeholder="可填写 HR 的人工补充评价，导出到 PDF"></textarea></label>
         </div>
-        <button class="btn primary" :disabled="loading" @click="exportPdf">
-          {{ loading ? '生成中…' : '导出评分 PDF' }}
+        <button class="btn primary" :disabled="loading" @click="exportMd">
+          {{ loading ? '生成中…' : '导出评分 Markdown' }}
         </button>
       </div>
     </div>
