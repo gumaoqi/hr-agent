@@ -47,20 +47,27 @@ function saveScreenedRecords(items) {
   }
 }
 
+const ALLOWED_EXT = ['md', 'txt', 'docx', 'pdf'];
+
+function fileExt(name) {
+  const m = /\.([a-zA-Z0-9]+)$/.exec(name);
+  return m ? m[1].toLowerCase() : '';
+}
+
 function pickFiles(event) {
   error.value = '';
   notice.value = '';
   const picked = Array.from(event.target.files || []);
-  const pdfs = picked.filter((f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
-  const nonPdf = picked.length - pdfs.length;
-  let next = [...files.value, ...pdfs];
+  const ok = picked.filter((f) => ALLOWED_EXT.includes(fileExt(f.name)));
+  const skipped = picked.length - ok.length;
+  let next = [...files.value, ...ok];
   if (next.length > MAX_FILES) {
     notice.value = `一次最多上传 ${MAX_FILES} 个文件，已自动保留前 ${MAX_FILES} 个，其余已忽略`;
     next = next.slice(0, MAX_FILES);
   }
   files.value = next;
-  if (nonPdf > 0) {
-    error.value = `已忽略 ${nonPdf} 个非 PDF 文件（仅支持 PDF 格式）`;
+  if (skipped > 0) {
+    error.value = `已忽略 ${skipped} 个不支持的格式（仅支持 Markdown / 文本 / Word / PDF）`;
   }
   event.target.value = '';
 }
@@ -84,7 +91,7 @@ async function startScreening() {
     return;
   }
   if (!files.value.length) {
-    error.value = '请先上传简历（PDF，最多 20 个文件）';
+    error.value = '请先上传简历（Markdown / 文本，最多 20 个文件）';
     return;
   }
   loading.value = true;
@@ -115,24 +122,31 @@ async function startScreening() {
   }
 }
 
-function openPreview(item) {
+async function openPreview(item) {
   const file = files.value.find((f) => f.name === item.fileName);
   if (!file) return;
-  preview.value = { file, url: URL.createObjectURL(file) };
+  const ext = fileExt(file.name);
+  if (ext === 'md' || ext === 'txt') {
+    // 文本/ Markdown 直接用文本预览（更易阅读）
+    const text = await file.text();
+    preview.value = { file, isText: true, text, url: '' };
+  } else {
+    preview.value = { file, isText: false, text: '', url: URL.createObjectURL(file) };
+  }
 }
 
 function closePreview() {
-  if (preview.value) {
+  if (preview.value && preview.value.url) {
     URL.revokeObjectURL(preview.value.url);
-    preview.value = null;
   }
+  preview.value = null;
 }
 </script>
 
 <template>
   <section class="screening">
     <h2>简历筛选</h2>
-    <p class="desc">填写岗位筛选条件，批量上传 PDF 简历，由大模型逐份评估（真实性、缺点、亮点、综合评分）并按评分排序。</p>
+    <p class="desc">填写岗位筛选条件，批量上传 Markdown / 文本简历（也支持 Word、PDF），由大模型逐份评估（真实性、缺点、亮点、综合评分）并按评分排序。</p>
 
     <div class="form">
       <div class="field">
@@ -171,10 +185,10 @@ function closePreview() {
 
     <div class="upload">
       <label class="upload-btn">
-        <input type="file" accept=".pdf,application/pdf" multiple @change="pickFiles" />
-        选择 PDF 简历（最多 20 个）
+        <input type="file" accept=".md,.txt,.docx,.pdf,text/markdown,text/plain,application/pdf" multiple @change="pickFiles" />
+        选择简历文件（Markdown / 文本，最多 20 个）
       </label>
-      <span class="upload-tip">支持多选；一次最多 {{ MAX_FILES }} 个文件</span>
+      <span class="upload-tip">推荐 .md / .txt（解析最准、预览清晰）；也兼容 .docx / .pdf</span>
     </div>
 
     <div v-if="files.length" class="file-list">
@@ -228,7 +242,8 @@ function closePreview() {
           <span>简历预览：{{ preview.file.name }}</span>
           <button @click="closePreview">关闭</button>
         </div>
-        <iframe :src="preview.url" class="preview-frame"></iframe>
+        <iframe v-if="!preview.isText" :src="preview.url" class="preview-frame"></iframe>
+        <pre v-else class="preview-text">{{ preview.text }}</pre>
       </div>
     </div>
   </section>
@@ -526,5 +541,17 @@ function closePreview() {
   flex: 1;
   border: none;
   width: 100%;
+}
+.preview-text {
+  flex: 1;
+  overflow: auto;
+  margin: 0;
+  padding: 16px;
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  background: #fafafa;
 }
 </style>

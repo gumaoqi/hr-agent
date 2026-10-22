@@ -518,15 +518,57 @@ async function parsePdfText(buffer) {
   }
 }
 
+/** 通用：去掉文件名扩展名 */
+function stripExt(name) {
+  return name.replace(/\.[^.]+$/, '');
+}
+
+/** 简历文件允许的扩展名 */
+const ALLOWED_RESUME_EXT = ['.md', '.txt', '.docx', '.pdf'];
+
+/** 取文件扩展名（小写带点） */
+function resumeExt(name) {
+  const m = /\.([a-zA-Z0-9]+)$/.exec(name);
+  return m ? '.' + m[1].toLowerCase() : '';
+}
+
+/** 按扩展名提取简历文本：md/txt 直接读文本（UTF-8，GBK 兜底），docx 用 mammoth，pdf 用 pdfjs */
+async function extractResumeText(file) {
+  const ext = resumeExt(file.originalname);
+  if (ext === '.pdf') {
+    return parsePdfText(file.buffer);
+  }
+  if (ext === '.docx') {
+    const mammoth = require('mammoth');
+    const result = await mammoth.extractRawText({ buffer: file.buffer });
+    return result.value || '';
+  }
+  // .md / .txt：直接按文本读取
+  let text = file.buffer.toString('utf8');
+  // 去掉 UTF-8 BOM
+  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+  // 若出现大量替换字符（�），说明原文件不是 UTF-8（常见 GBK 编码 txt），尝试 GBK 解码
+  const bad = (text.match(/\uFFFD/g) || []).length;
+  if (bad > 0) {
+    try {
+      const gbk = new (require('util').TextDecoder)('gbk');
+      text = gbk.decode(file.buffer);
+    } catch {
+      // 保持 UTF-8 解码结果
+    }
+  }
+  return text;
+}
+
 /** 单份简历分析：调用 DeepSeek 输出结构化评估 */
 async function analyzeResume(fileInfo, requirements) {
   const text = (fileInfo.text || '').slice(0, 8000);
   if (!text.trim()) {
     return {
-      name: fileInfo.originalname.replace(/\.pdf$/i, ''),
+      name: stripExt(fileInfo.originalname),
       authenticity: fileInfo.parseError
-        ? `PDF 解析失败：${fileInfo.parseError}`
-        : 'PDF 无法解析出文本（可能为扫描件），请人工查看原简历',
+        ? `文件解析失败：${fileInfo.parseError}`
+        : '文件无法解析出文本（可能为扫描件或加密文件），请人工查看原简历',
       weaknesses: '无法评估',
       highlights: '无法评估',
       score: null,
@@ -606,22 +648,22 @@ app.post('/api/resume-screening', upload.array('resumes', 20), async (req, res) 
   if (files.length > 20) {
     return res.status(400).json({ error: '一次最多上传 20 个文件' });
   }
-  const notPdf = files.filter((f) => !(f.mimetype === 'application/pdf' || /\.pdf$/i.test(f.originalname)));
-  if (notPdf.length) {
-    return res.status(400).json({ error: `仅支持 PDF 格式：${notPdf.map((f) => fixFileName(f.originalname)).join('、')}` });
+  const badExt = files.filter((f) => !ALLOWED_RESUME_EXT.includes(resumeExt(f.originalname)));
+  if (badExt.length) {
+    return res.status(400).json({ error: `仅支持 Markdown / 文本 / Word / PDF 格式：${badExt.map((f) => fixFileName(f.originalname)).join('、')}` });
   }
 
   const requirements = { city, job, salary: salary || '不限', education: education || '不限', other: other || '' };
 
-  // 逐份提取 PDF 文本
+  // 逐份提取简历文本（md/txt 直接读取，docx 转文本，pdf 解析）
   const parsed = [];
   for (const f of files) {
     const name = fixFileName(f.originalname);
     try {
-      const text = await parsePdfText(f.buffer);
+      const text = await extractResumeText(f);
       parsed.push({ originalname: name, text: text || '' });
     } catch (e) {
-      console.warn('[resume] PDF 解析失败:', name, e.message);
+      console.warn('[resume] 简历解析失败:', name, e.message);
       parsed.push({ originalname: name, text: '', parseFailed: true, parseError: e.message });
     }
   }
@@ -633,7 +675,7 @@ app.post('/api/resume-screening', upload.array('resumes', 20), async (req, res) 
     const batch = parsed.slice(i, i + BATCH);
     const batchItems = await Promise.all(
       batch.map((p) => analyzeResume(p, requirements).catch((e) => ({
-        name: p.originalname.replace(/\.pdf$/i, ''),
+        name: stripExt(p.originalname),
         authenticity: `分析失败：${e.message}`,
         weaknesses: '无法评估',
         highlights: '无法评估',
@@ -653,7 +695,7 @@ app.post('/api/resume-screening', upload.array('resumes', 20), async (req, res) 
     const item = items.find((i) => i.fileName === p.originalname);
     await setResumeCache(p.originalname, {
       text: p.text,
-      name: item?.name || p.originalname.replace(/\.pdf$/i, ''),
+      name: item?.name || stripExt(p.originalname),
       score: item?.score ?? null,
       job,
       city,

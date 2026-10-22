@@ -1,0 +1,1 @@
+{"error":"仅支持 Markdown / 文本 / Word / PDF 格式：简历.exe"}
