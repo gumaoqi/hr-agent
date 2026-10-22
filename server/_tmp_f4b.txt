@@ -1,1 +1,0 @@
-{"pending":true,"orderId":"DKHJQ20261021190056756p7cHbRA64pWkQBE6","resumeFileName":"李娜-测试简历.pdf","name":"李娜","job":"Java开发工程师","city":"成都","score":10,"questionsText":"面试预提问清单  候选人简历：张伟-测试简历.pdf  岗位信息：Java开发工程师（成都）  特别需求：无  生成日期：2026/10/21  1. 请介绍您的项目经历  考察意图：考察项目真实性  2. 为什么离开上一家公司  考察意图：考察稳定性\n"}
